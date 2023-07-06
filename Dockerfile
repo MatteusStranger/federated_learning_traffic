@@ -1,21 +1,26 @@
-# Use the latest Python image from DockerHub
-FROM python:latest
+# Use the latest Ubuntu image from DockerHub
+FROM ubuntu:latest
 
 # Set the working directory in the Docker image
 WORKDIR /app
 
-# Copy the requirements.txt file into the Docker image
-COPY requirements.txt .
+# Copy the project files to the working directory
+COPY . /app/
 
-# Install the Python libraries specified in requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# Install system dependencies
+RUN apt-get update && apt-get install -y software-properties-common
 
 RUN add-apt-repository ppa:sumo/stable -y
-RUN apt-get update
-RUN apt install sumo sumo-tools sumo-doc -y
 
-# Copy the rest of the code into the Docker image
-COPY . .
+# Add SUMO repository and install SUMO and related packages
+RUN apt-get update && \
+    apt-get install -y sumo sumo-tools sumo-doc
 
-# Set the command to run when the Docker image is started
-CMD ["python", "main.py"]
+# Install Python and pip
+RUN apt-get install -y python3-pip
+
+# Install Python dependencies
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Set the entry point for the container
+ENTRYPOINT ["/bin/bash", "-c", "mlflow server --host 0.0.0.0 --backend-store-uri ${MLFLOW_TRACKING_URI} --default-artifact-root ./artifacts"]

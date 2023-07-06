@@ -4,3 +4,4 @@ traci
 scikit-learn
 numpy
 networkx
+psycopg2-binary
