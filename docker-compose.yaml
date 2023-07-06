@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  app:
+  traffic:
     build: .
     volumes:
       - D:\Mestrado\code:/app
@@ -10,7 +10,7 @@ services:
     environment:
       - MLFLOW_TRACKING_URI=postgresql://mlflow:mlflow@db:5432/mlflow
     command: >
-      bash -c "mlflow server --host 0.0.0.0 --backend-store-uri ${MLFLOW_TRACKING_URI} --default-artifact-root ./artifacts & python your_script.py"
+      bash -c "mlflow server --host 0.0.0.0 --backend-store-uri ${MLFLOW_TRACKING_URI} --default-artifact-root ./artifacts & python main.py"
 
   db:
     image: postgres:latest
