@@ -6,6 +6,7 @@ import traci
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, r2_score
 import networkx as nx
+from time import time
 
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
@@ -201,7 +202,7 @@ def save_models(models):
 
 def monitor_and_retrain(metric='min', use_astar=False, sumo_config_file="due.actuated.sumocfg", model_candidates=None):
     client = MlflowClient()
-    experiment_id = client.create_experiment("Federated Learning Experiment")
+    experiment_id = client.create_experiment(f"Federated Learning Experiment - {time()}")
     run = client.create_run(experiment_id)
     data = collect_data(sumo_config_file)
     validate_data(data)
@@ -258,6 +259,6 @@ if __name__ == "__main__":
 
     }
     best_model, best_route = monitor_and_retrain(
-        metric='min', use_astar=False, sumo_config_file="due.actuated.sumocfg", model_candidates=model_candidates)
+        metric='min', use_astar=False, sumo_config_file="LuSTScenario/scenario/due.actuated.sumocfg", model_candidates=model_candidates)
     print(f"Best Model: {best_model}")
     print(f"Best Route: {best_route}")
