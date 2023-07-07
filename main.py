@@ -3,11 +3,10 @@ import mlflow.pyfunc
 from mlflow.tracking import MlflowClient
 import pandas as pd
 import traci
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import mean_squared_error, r2_score
 import networkx as nx
 from time import time
-
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.tree import DecisionTreeRegressor
@@ -17,14 +16,16 @@ from sklearn.neural_network import MLPRegressor
 from sklearn.neighbors import KNeighborsRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.ensemble import BaggingRegressor, AdaBoostRegressor
+from joblib import Parallel, delayed
+import matplotlib.pyplot as plt
 
 # Set up MLFlow tracking
 mlflow.set_tracking_uri('postgresql://mlflow:mlflow@db:5432/mlflow')
 
 # Constants
-BATCH_SIZE = 64
-EPOCHS = 100
-LEARNING_RATE = 0.001
+BATCH_SIZE = [32, 64, 128]
+EPOCHS = [50, 100, 200]
+LEARNING_RATE = [0.001, 0.01, 0.1]
 
 
 def collect_data(sumo_config_file):
@@ -56,23 +57,12 @@ def validate_data(data):
         raise ValueError("Input data does not contain the expected columns.")
     # Add more data validation checks as needed
 
-
 def train_models(X_train, y_train, metric, model_candidates):
-    models = {}
-    metrics = {}
-    for vehicle_id, model in model_candidates.items():
+    def train_model(vehicle_id, model, X_train, y_train):
         model.fit(X_train, y_train)
-        models[vehicle_id] = model
-        y_pred = model.predict(X_train)
-        if metric == 'min':
-            model_metric = mean_squared_error(y_train, y_pred)
-        else:
-            model_metric = r2_score(y_train, y_pred)
-        metrics[vehicle_id] = {
-            'Metric': model_metric
-        }
-    return models, metrics
+        return vehicle_id, model
 
+    models = dict(Parallel(n_jobs=-1)(delayed(train_model)(vehicle_id, model, X_train, y_train) for vehicle_id, model in model_candidates.items()))
 
 def evaluate_models(models, X_test, y_test):
     performance_metrics = {}
@@ -135,11 +125,16 @@ def evaluate_route_performance(new_routes, shortest_paths):
 
 
 def log_metrics(metrics, prefix):
-    for vehicle_id, metric_values in metrics.items():
-        for metric_name, metric_value in metric_values.items():
-            mlflow.log_metric(
-                f"{prefix}_{metric_name}_{vehicle_id}", metric_value)
+    # Create table
+    table = pd.DataFrame(metrics)
+    table.to_csv("metrics.csv")
+    mlflow.log_artifact("metrics.csv")
 
+    # Create plot
+    for vehicle_id, metric_values in metrics.items():
+        plt.plot(list(metric_values.values()))
+    plt.savefig("plot.png")
+    mlflow.log_artifact("plot.png")
 
 def log_model_parameters(models):
     for vehicle_id, model in models.items():
@@ -244,6 +239,7 @@ def monitor_and_retrain(metric='min', use_astar=False, sumo_config_file="due.act
 
 
 if __name__ == "__main__":
+    
     # Define model candidates
     model_candidates = {
         'Linear Regression': LinearRegression(),
@@ -256,8 +252,8 @@ if __name__ == "__main__":
         'Gaussian Process': GaussianProcessRegressor(),
         'Bagging': BaggingRegressor(),
         'AdaBoost': AdaBoostRegressor()
-
     }
+
     best_model, best_route = monitor_and_retrain(
         metric='min', use_astar=False, sumo_config_file="LuSTScenario/scenario/due.actuated.sumocfg", model_candidates=model_candidates)
     print(f"Best Model: {best_model}")

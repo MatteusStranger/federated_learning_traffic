@@ -12,8 +12,8 @@ services:
       - db
     volumes:
       - ./artifacts:/app/artifacts
-      - D:\Mestrado\federated_learning_traffic:/app
-
+      - D:\\Mestrado\\federated_learning_traffic:/app
+    mem_limit: 8g
   db:
     image: postgres:latest
     environment:
@@ -22,6 +22,5 @@ services:
       - POSTGRES_DB=mlflow
     volumes:
       - db-data:/var/lib/postgresql/data
-
 volumes:
   db-data:
