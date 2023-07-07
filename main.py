@@ -23,9 +23,9 @@ import matplotlib.pyplot as plt
 mlflow.set_tracking_uri('postgresql://mlflow:mlflow@db:5432/mlflow')
 
 # Constants
-BATCH_SIZE = [32, 64, 128]
-EPOCHS = [50, 100, 200]
-LEARNING_RATE = [0.001, 0.01, 0.1]
+BATCH_SIZE = [32, 64, 128, 256, 512, 1024]
+EPOCHS = [50, 100, 200, 300, 400, 500]
+LEARNING_RATE = [0.00001, 0.0001, 0.001, 0.01, 0.1, 1]
 
 
 def collect_data(sumo_config_file):
@@ -57,12 +57,15 @@ def validate_data(data):
         raise ValueError("Input data does not contain the expected columns.")
     # Add more data validation checks as needed
 
+
 def train_models(X_train, y_train, metric, model_candidates):
     def train_model(vehicle_id, model, X_train, y_train):
         model.fit(X_train, y_train)
         return vehicle_id, model
 
-    models = dict(Parallel(n_jobs=-1)(delayed(train_model)(vehicle_id, model, X_train, y_train) for vehicle_id, model in model_candidates.items()))
+    models = dict(Parallel(n_jobs=-1)(delayed(train_model)(vehicle_id, model,
+                  X_train, y_train) for vehicle_id, model in model_candidates.items()))
+
 
 def evaluate_models(models, X_test, y_test):
     performance_metrics = {}
@@ -136,6 +139,7 @@ def log_metrics(metrics, prefix):
     plt.savefig("plot.png")
     mlflow.log_artifact("plot.png")
 
+
 def log_model_parameters(models):
     for vehicle_id, model in models.items():
         mlflow.log_param(f"Model_Parameters_{vehicle_id}", model.get_params())
@@ -197,7 +201,8 @@ def save_models(models):
 
 def monitor_and_retrain(metric='min', use_astar=False, sumo_config_file="due.actuated.sumocfg", model_candidates=None):
     client = MlflowClient()
-    experiment_id = client.create_experiment(f"Federated Learning Experiment - {time()}")
+    experiment_id = client.create_experiment(
+        f"Federated Learning Experiment - {time()}")
     run = client.create_run(experiment_id)
     data = collect_data(sumo_config_file)
     validate_data(data)
@@ -239,7 +244,7 @@ def monitor_and_retrain(metric='min', use_astar=False, sumo_config_file="due.act
 
 
 if __name__ == "__main__":
-    
+
     # Define model candidates
     model_candidates = {
         'Linear Regression': LinearRegression(),
