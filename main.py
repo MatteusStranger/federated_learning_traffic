@@ -29,7 +29,7 @@ LEARNING_RATE = [0.00001, 0.0001, 0.001, 0.01, 0.1, 1]
 
 
 def collect_data(sumo_config_file):
-    traci.start(["sumo", "-c", sumo_config_file])
+    traci.start(["sumo/bin/sumo", "-c", sumo_config_file])
     data = []
     step = 0
     while traci.simulation.getMinExpectedNumber() > 0:
