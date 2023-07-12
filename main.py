@@ -80,8 +80,8 @@ def evaluate_route_performance(new_routes, shortest_paths):
 
 
 simulation_times = [50, 100, 150, 200]
-sumo_config_files = ["dua.actuated.sumocfg", "dua.static.sumocfg",
-                     "due.actuated.sumocfg", "due.static.sumocfg"]
+sumo_config_files = ["LuSTScenario\scenario\dua.actuated.sumocfg", "LuSTScenario\scenario\dua.static.sumocfg",
+                     "LuSTScenario\scenario\due.actuated.sumocfg", "LuSTScenario\scenario\due.static.sumocfg"]
 model_grid = {
     "LinearRegression": {"normalize": [True, False]},
     "RandomForestRegressor": {"n_estimators": [100, 200, 300], "max_depth": [None, 10, 20]},

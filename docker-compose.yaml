@@ -8,11 +8,18 @@ services:
     volumes:
       - D:/Mestrado/federated_learning_traffic:/mnt/mlflow
       - D:/Mestrado/federated_learning_traffic:/app
+    environment:
+      - MLFLOW_TRACKING_URI=postgresql://mlflow:mlflow@db/mlflow
+      - MLFLOW_SERVER_WORKERS=9
 
   db:
-    image: postgres:13
-    restart: always
+    image: postgres:latest
     environment:
-      POSTGRES_PASSWORD: password
+      - POSTGRES_USER=mlflow
+      - POSTGRES_PASSWORD=mlflow
+      - POSTGRES_DB=mlflow
     volumes:
       - D:/Mestrado/federated_learning_traffic:/var/lib/postgresql/data
+
+volumes:
+  db-data:
