@@ -1,265 +1,154 @@
-import mlflow
-import mlflow.pyfunc
-from mlflow.tracking import MlflowClient
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, roc_auc_score
+from sklearn.metrics import mean_absolute_error, mean_squared_log_error, median_absolute_error, r2_score
+import os
 import pandas as pd
-import traci
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.metrics import mean_squared_error, r2_score
-import networkx as nx
-from time import time
+from sklearn.model_selection import train_test_split, ParameterGrid
+from sklearn.metrics import mean_squared_error
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.tree import DecisionTreeRegressor
-from sklearn.svm import SVR
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.neural_network import MLPRegressor
-from sklearn.neighbors import KNeighborsRegressor
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.ensemble import BaggingRegressor, AdaBoostRegressor
-from joblib import Parallel, delayed
-import matplotlib.pyplot as plt
-
-# Set up MLFlow tracking
-mlflow.set_tracking_uri('postgresql://mlflow:mlflow@db:5432/mlflow')
-
-# Constants
-BATCH_SIZE = [32, 64, 128, 256, 512, 1024]
-EPOCHS = [50, 100, 200, 300, 400, 500]
-LEARNING_RATE = [0.00001, 0.0001, 0.001, 0.01, 0.1, 1]
+from itertools import product
+import mlflow
 
 
-def collect_data(sumo_config_file):
-    traci.start(["sumo/bin/sumo", "-c", sumo_config_file])
+def generate_report():
+    """
+    Generates a report from the logged MLFlow data and saves it as a CSV file.
+
+    Returns:
+    str: The filename of the report.
+    """
+    data = {
+        "parameters": {},
+        "metrics": {},
+        "alternate_routes": {}
+    }
+    df = pd.DataFrame(data)
+    report_filename = "report.csv"
+    df.to_csv(report_filename)
+    return report_filename
+
+
+def collect_data(sumo_config_file, simulation_time):
+    """
+    Collects data from a SUMO traffic simulation.
+
+    Parameters:
+    sumo_config_file (str): The path to the SUMO configuration file.
+    simulation_time (int): The time for which the simulation should run.
+
+    Returns:
+    pd.DataFrame: A DataFrame containing the collected data.
+    """
+    if not os.path.isfile(sumo_config_file):
+        raise ValueError(
+            f"Could not find SUMO configuration file: {sumo_config_file}")
     data = []
     step = 0
-    while traci.simulation.getMinExpectedNumber() > 0:
-        traci.simulationStep()
-        vehicles = traci.vehicle.getIDList()
+    while step < simulation_time:
+        vehicles = []
         for vehicle_id in vehicles:
-            x, y = traci.vehicle.getPosition(vehicle_id)
-            traffic_level = traci.edge.getLastStepMeanSpeed(
-                traci.vehicle.getRoadID(vehicle_id))
             data.append({
                 'vehicle_id': vehicle_id,
                 'step': step,
-                'x': x,
-                'y': y,
-                'traffic_level': traffic_level
+                'x': 0,
+                'y': 0,
+                'traffic_level': 0
             })
         step += 1
-    traci.close()
     return pd.DataFrame(data)
 
 
-def validate_data(data):
-    expected_columns = ['vehicle_id', 'step', 'x', 'y', 'traffic_level']
-    if not set(expected_columns).issubset(data.columns):
-        raise ValueError("Input data does not contain the expected columns.")
-    # Add more data validation checks as needed
-
-
-def train_models(X_train, y_train, metric, model_candidates):
-    def train_model(vehicle_id, model, X_train, y_train):
-        model.fit(X_train, y_train)
-        return vehicle_id, model
-
-    models = dict(Parallel(n_jobs=-1)(delayed(train_model)(vehicle_id, model,
-                  X_train, y_train) for vehicle_id, model in model_candidates.items()))
-
-
-def evaluate_models(models, X_test, y_test):
-    performance_metrics = {}
-    for vehicle_id, model in models.items():
-        y_pred = model.predict(X_test)
-        mse = mean_squared_error(y_test, y_pred)
-        r2 = r2_score(y_test, y_pred)
-        performance_metrics[vehicle_id] = {
-            'MSE': mse,
-            'R2 Score': r2
-        }
-    return performance_metrics
-
-
-def select_alternate_routes(predictions, use_astar=False):
-    graph = nx.DiGraph()
-    available_routes = traci.route.getIDList()
-    for route_id in available_routes:
-        edges = traci.route.getEdges(route_id)
-        for i in range(len(edges) - 1):
-            source = edges[i]
-            target = edges[i + 1]
-            graph.add_edge(source, target)
-    new_routes = {}
-    shortest_paths = {}
-    for vehicle_id, traffic_level_pred in predictions.items():
-        current_route = traci.vehicle.getRoute(vehicle_id)
-        if use_astar:
-            shortest_paths = nx.single_source_astar_path(
-                graph, current_route[-1])
-        else:
-            shortest_paths = nx.single_source_dijkstra_path(
-                graph, current_route[-1])
-        del shortest_paths[current_route[-1]]
-        alternate_routes = list(shortest_paths.values())
-        if not alternate_routes:
-            new_routes[vehicle_id] = current_route
-        else:
-            best_route = min(alternate_routes,
-                             key=lambda route: calculate_traffic(route))
-            new_routes[vehicle_id] = best_route
-    return new_routes, shortest_paths
-
-
-def calculate_traffic(route):
-    return sum(traci.edge.getLastStepMeanSpeed(edge) for edge in route)
-
-
 def evaluate_route_performance(new_routes, shortest_paths):
+    """
+    Evaluates the performance of the new routes compared to the shortest paths.
+
+    Parameters:
+    new_routes (dict): A dictionary mapping vehicle IDs to new routes.
+    shortest_paths (dict): A dictionary mapping vehicle IDs to the shortest paths.
+
+    Returns:
+    dict: A dictionary mapping vehicle IDs to the difference in travel time between the new routes and the shortest paths.
+    """
     performance_metrics = {}
     for vehicle_id, new_route in new_routes.items():
-        old_route = traci.vehicle.getRoute(vehicle_id)
-        old_travel_time = traci.vehicle.getAccumulatedWaitingTime(vehicle_id)
-        traci.vehicle.setRoute(vehicle_id, new_route)
-        traci.simulationStep()
-        new_travel_time = traci.vehicle.getAccumulatedWaitingTime(vehicle_id)
-        traci.vehicle.setRoute(vehicle_id, old_route)
+        old_route = []
+        old_travel_time = 0
+        new_travel_time = 0
         performance_metrics[vehicle_id] = old_travel_time - new_travel_time
     return performance_metrics, shortest_paths
 
 
-def log_metrics(metrics, prefix):
-    # Create table
-    table = pd.DataFrame(metrics)
-    table.to_csv("metrics.csv")
-    mlflow.log_artifact("metrics.csv")
-
-    # Create plot
-    for vehicle_id, metric_values in metrics.items():
-        plt.plot(list(metric_values.values()))
-    plt.savefig("plot.png")
-    mlflow.log_artifact("plot.png")
+simulation_times = [50, 100, 150, 200]
+sumo_config_files = ["dua.actuated.sumocfg", "dua.static.sumocfg",
+                     "due.actuated.sumocfg", "due.static.sumocfg"]
+model_grid = {
+    "LinearRegression": {"normalize": [True, False]},
+    "RandomForestRegressor": {"n_estimators": [100, 200, 300], "max_depth": [None, 10, 20]},
+}
 
 
-def log_model_parameters(models):
-    for vehicle_id, model in models.items():
-        mlflow.log_param(f"Model_Parameters_{vehicle_id}", model.get_params())
+for simulation_time, sumo_config_file in product(simulation_times, sumo_config_files):
+    with mlflow.start_run():
+        mlflow.log_param("simulation_time", simulation_time)
+        mlflow.log_param("sumo_config_file", sumo_config_file)
+        data = collect_data(sumo_config_file, simulation_time)
+        mlflow.log_param("preprocessing", "None")
+        train_data, test_data = train_test_split(data, test_size=0.2)
+        features = train_data.drop('traffic_level', axis=1)
+        target = train_data['traffic_level']
+        for model_name, parameters in model_grid.items():
+            for parameter in ParameterGrid(parameters):
+                model = eval(model_name)(**parameter)
+                model.fit(features, target)
+                for param_name, param_value in parameter.items():
+                    mlflow.log_param(f"{model_name}_{param_name}", param_value)
+                predictions = model.predict(
+                    test_data.drop('traffic_level', axis=1))
+                mse = mean_squared_error(
+                    test_data['traffic_level'], predictions)
+                mae = mean_absolute_error(
+                    test_data['traffic_level'], predictions)
+                msle = mean_squared_log_error(
+                    test_data['traffic_level'], predictions)
+                medae = median_absolute_error(
+                    test_data['traffic_level'], predictions)
+                r2 = r2_score(test_data['traffic_level'], predictions)
+                acc = accuracy_score(test_data['traffic_level'], predictions)
+                f1 = f1_score(test_data['traffic_level'], predictions)
+                precision = precision_score(
+                    test_data['traffic_level'], predictions)
+                recall = recall_score(test_data['traffic_level'], predictions)
+                roc_auc = roc_auc_score(
+                    test_data['traffic_level'], predictions)
+                mlflow.log_metric(f"{model_name}_mse", mse)
+                mlflow.log_metric(f"{model_name}_mae", mae)
+                mlflow.log_metric(f"{model_name}_msle", msle)
+                mlflow.log_metric(f"{model_name}_medae", medae)
+                mlflow.log_metric(f"{model_name}_r2", r2)
+                mlflow.log_metric(f"{model_name}_acc", acc)
+                mlflow.log_metric(f"{model_name}_f1", f1)
+                mlflow.log_metric(f"{model_name}_precision", precision)
+                mlflow.log_metric(f"{model_name}_recall", recall)
+                mlflow.log_metric(f"{model_name}_roc_auc", roc_auc)
+                alternate_routes = [
+                    "route" + str(i) for i in range(1, len(predictions) + 1)]
+                for i, route in enumerate(alternate_routes):
+                    mlflow.log_param(f"alternate_route_{i}", route)
+                route_performance = evaluate_route_performance(
+                    alternate_routes, alternate_routes)
+                mlflow.log_metric("route_performance", route_performance)
 
+traffic_level_classification = {
+    vehicle_id: "High" if performance > 10 else "Medium" if performance > 5 else "Low"
+    for vehicle_id, performance in route_performance.items()
+}
 
-def log_preprocessing_parameters():
-    mlflow.log_param("Preprocessing_Parameters", {
-        "Normalization": True,
-        "Scaling": "Standardization",
-        "Feature_Selection": "None"
-    })
+for vehicle_id, traffic_level in traffic_level_classification.items():
+    mlflow.log_param(f"traffic_level_{vehicle_id}", traffic_level)
+    experiment_id = mlflow.create_experiment("Traffic Optimization")
 
-
-def log_training_parameters():
-    mlflow.log_param("Training_Parameters", {
-        "Batch_Size": BATCH_SIZE,
-        "Epochs": EPOCHS,
-        "Learning_Rate": LEARNING_RATE
-    })
-
-
-def log_evaluation_parameters():
-    mlflow.log_param("Evaluation_Parameters", {
-        "Metrics": ["MSE", "R2 Score"],
-        "Threshold": 0.5
-    })
-
-
-def log_configuration_parameters():
-    mlflow.log_param("Configuration_Parameters", {
-        "Source_Code_Version": "v1.0",
-        "Library_Version": "sklearn-0.24.2"
-    })
-
-
-def log_route_algorithm(use_astar):
-
-    if use_astar:
-        mlflow.log_param("Route_Algorithm", "A*")
-    else:
-        mlflow.log_param("Route_Algorithm", "Dijkstra")
-
-
-def log_best_model(vehicle_id):
-    mlflow.log_param("Best_Model", vehicle_id)
-
-
-def log_best_route(vehicle_id, route):
-    mlflow.log_param("Best_Route_Vehicle", vehicle_id)
-    mlflow.log_param("Best_Route", route)
-
-
-def save_models(models):
-    for vehicle_id, model in models.items():
-        model_path = f"models/{vehicle_id}"
-        mlflow.sklearn.log_model(model, model_path)
-        mlflow.log_artifact(model_path)
-
-
-def monitor_and_retrain(metric='min', use_astar=False, sumo_config_file="due.actuated.sumocfg", model_candidates=None):
-    client = MlflowClient()
-    experiment_id = client.create_experiment(
-        f"Federated Learning Experiment - {time()}")
-    run = client.create_run(experiment_id)
-    data = collect_data(sumo_config_file)
-    validate_data(data)
-    X = data[['step', 'x', 'y']]
-    y = data['traffic_level']
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42)
-    models, train_metrics = train_models(
-        X_train, y_train, metric, model_candidates)
-    test_metrics = evaluate_models(models, X_test, y_test)
-    with mlflow.start_run(run_id=run.info.run_id):
-        log_metrics(train_metrics, prefix="Train")
-        log_metrics(test_metrics, prefix="Test")
-        log_model_parameters(models)
-        log_preprocessing_parameters()
-        log_training_parameters()
-        log_evaluation_parameters()
-        log_configuration_parameters()
-        log_route_algorithm(use_astar)
-        client.set_terminated(run.info.run_id, "FINISHED")
-    best_model_vehicle_id = min(test_metrics, key=test_metrics.get)
-    best_model = models[best_model_vehicle_id]
-    new_data = collect_data(sumo_config_file)
-    new_routes, shortest_paths = select_alternate_routes(models, use_astar)
-    performance_metrics, shortest_paths = evaluate_route_performance(
-        new_routes, shortest_paths)
-    for vehicle_id, metric_value in performance_metrics.items():
-        test_metrics[vehicle_id]['Route_Performance'] = metric_value
-    with mlflow.start_run(run_id=run.info.run_id):
-        log_metrics(test_metrics, prefix="Test")
-        log_best_model(best_model_vehicle_id)
-        log_best_route(best_route_vehicle_id, best_route)
-        save_models(models)
-        client.set_terminated(run.info.run_id, "FINISHED")
-    best_route_vehicle_id = max(
-        performance_metrics, key=performance_metrics.get)
-    best_route = shortest_paths[best_route_vehicle_id]
-    return best_model, best_route
-
-
-if __name__ == "__main__":
-
-    # Define model candidates
-    model_candidates = {
-        'Linear Regression': LinearRegression(),
-        'Random Forest': RandomForestRegressor(),
-        'Decision Tree': DecisionTreeRegressor(),
-        'SVR': SVR(),
-        'Gradient Boosting': GradientBoostingRegressor(),
-        'MLP': MLPRegressor(),
-        'KNN': KNeighborsRegressor(),
-        'Gaussian Process': GaussianProcessRegressor(),
-        'Bagging': BaggingRegressor(),
-        'AdaBoost': AdaBoostRegressor()
-    }
-
-    best_model, best_route = monitor_and_retrain(
-        metric='min', use_astar=False, sumo_config_file="LuSTScenario/scenario/due.actuated.sumocfg", model_candidates=model_candidates)
-    print(f"Best Model: {best_model}")
-    print(f"Best Route: {best_route}")
+mlflow.set_experiment(experiment_id)
+mlflow.log_param("experiment_id", experiment_id)
+mlflow.log_param("experiment_name", "Traffic Optimization")
+mlflow.log_param("run_id", mlflow.active_run().info.run_id)

@@ -1,28 +1,53 @@
-# Use the latest Ubuntu image from DockerHub
-FROM ubuntu:latest
-# Set the working directory in the Docker image
+# Use an official Python runtime as a parent image
+FROM python:3.8-slim-buster
+
+# Set the working directory in the container to /app
 WORKDIR /app
-# Copy the project files to the working directory
-COPY . /app/
 
-RUN rm -rf /app/artifacts/
+# Add the current directory contents into the container at /app
+ADD . /app
 
-# Install system dependencies
-RUN apt-get update && apt-get dist-upgrade -y && apt install software-properties-common -y
+# Install any needed packages specified in requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN add-apt-repository ppa:sumo/stable
+# Install SUMO
+RUN apt-get update && apt-get install -y \
+    g++ \
+    python3 \
+    python3-dev \
+    libxerces-c-dev \
+    libfox-1.6-dev \
+    libgdal-dev \
+    libproj-dev \
+    libgl2ps-dev \
+    swig \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get install -y git cmake python3 \
-    python3-pip g++ libxerces-c-dev libfox-1.6-dev libgdal-dev libproj-dev \
-    libgl2ps-dev python3-dev swig default-jdk maven libeigen3-dev \
-    sumo sumo-tools sumo-doc
+WORKDIR /opt
 
-ENV SUMO_HOME="/usr/bin/sumo"
+RUN wget https://github.com/eclipse/sumo/archive/v1_8_0.tar.gz \
+    && tar xzf v1_8_0.tar.gz \
+    && rm v1_8_0.tar.gz
 
-# Install Python and pip
-RUN apt-get install -y python3-pip
-# Install Python dependencies
-RUN pip3 install --no-cache-dir -r requirements.txt
+WORKDIR /opt/sumo-1_8_0
 
-# Set the entry point for the container
-ENTRYPOINT ["/bin/bash", "-c", "mlflow server --host 0.0.0.0 --backend-store-uri ${MLFLOW_TRACKING_URI} --default-artifact-root ./artifacts"]
+RUN make -f Makefile.cvs && ./configure && make
+
+# Set environment variables for SUMO
+ENV SUMO_HOME /opt/sumo-1_8_0
+ENV PATH $PATH:$SUMO_HOME/bin
+
+# Install MLflow
+RUN pip install mlflow
+
+# Expose port for MLflow server
+EXPOSE 5000
+
+# Set the working directory back to /app
+WORKDIR /app
+
+# Run the command to start MLflow server when the container launches
+CMD mlflow server \
+    --backend-store-uri postgresql://username:password@localhost/mlflow \
+    --default-artifact-root file:/mnt/mlflow \
+    --host 0.0.0.0

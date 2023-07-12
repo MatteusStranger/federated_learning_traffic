@@ -1,27 +1,18 @@
 version: "3.9"
+
 services:
   mlflow:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    build: .
     ports:
       - "5000:5000"
-    environment:
-      - MLFLOW_TRACKING_URI=postgresql://mlflow:mlflow@db/mlflow
-      - MLFLOW_SERVER_WORKERS=9
-    depends_on:
-      - db
     volumes:
-      - ./artifacts:/app/artifacts
-      - D:\\Mestrado\\federated_learning_traffic:/app
-    mem_limit: 8g
+      - D:/Mestrado/federated_learning_traffic:/mnt/mlflow
+      - D:/Mestrado/federated_learning_traffic:/app
+
   db:
-    image: postgres:latest
+    image: postgres:13
+    restart: always
     environment:
-      - POSTGRES_USER=mlflow
-      - POSTGRES_PASSWORD=mlflow
-      - POSTGRES_DB=mlflow
+      POSTGRES_PASSWORD: password
     volumes:
-      - db-data:/var/lib/postgresql/data
-volumes:
-  db-data:
+      - D:/Mestrado/federated_learning_traffic:/var/lib/postgresql/data
