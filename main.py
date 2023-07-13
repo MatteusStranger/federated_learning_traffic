@@ -9,6 +9,8 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.tree import DecisionTreeRegressor
 from itertools import product
 import mlflow
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 
 
 def generate_report():
@@ -80,15 +82,15 @@ def evaluate_route_performance(new_routes, shortest_paths):
 
 
 simulation_times = [50, 100, 150, 200]
-sumo_config_files = ["LuSTScenario\scenario\dua.actuated.sumocfg", "LuSTScenario\scenario\dua.static.sumocfg",
-                     "LuSTScenario\scenario\due.actuated.sumocfg", "LuSTScenario\scenario\due.static.sumocfg"]
+sumo_config_files = ["LuSTScenario\\scenario\\dua.actuated.sumocfg", "LuSTScenario\\scenario\\dua.static.sumocfg",
+                     "LuSTScenario\\scenario\\due.actuated.sumocfg", "LuSTScenario\\scenario\\due.static.sumocfg"]
 model_grid = {
     "LinearRegression": {"normalize": [True, False]},
     "RandomForestRegressor": {"n_estimators": [100, 200, 300], "max_depth": [None, 10, 20]},
 }
 
 
-for simulation_time, sumo_config_file in product(simulation_times, sumo_config_files):
+def run_simulation_and_modeling(simulation_time, sumo_config_file):
     with mlflow.start_run():
         mlflow.log_param("simulation_time", simulation_time)
         mlflow.log_param("sumo_config_file", sumo_config_file)
@@ -138,17 +140,24 @@ for simulation_time, sumo_config_file in product(simulation_times, sumo_config_f
                 route_performance = evaluate_route_performance(
                     alternate_routes, alternate_routes)
                 mlflow.log_metric("route_performance", route_performance)
+                traffic_level_classification = {
+                    vehicle_id: "High" if performance > 10 else "Medium" if performance > 5 else "Low"
+                    for vehicle_id, performance in route_performance.items()
+                }
+                for vehicle_id, traffic_level in traffic_level_classification.items():
+                    mlflow.log_param(
+                        f"traffic_level_{vehicle_id}", traffic_level)
+                    experiment_id = mlflow.create_experiment(
+                        "Traffic Optimization")
 
-traffic_level_classification = {
-    vehicle_id: "High" if performance > 10 else "Medium" if performance > 5 else "Low"
-    for vehicle_id, performance in route_performance.items()
-}
+                mlflow.set_experiment(experiment_id)
+                mlflow.log_param("experiment_id", experiment_id)
+                mlflow.log_param("experiment_name", "Traffic Optimization")
+                mlflow.log_param("run_id", mlflow.active_run().info.run_id)
 
-for vehicle_id, traffic_level in traffic_level_classification.items():
-    mlflow.log_param(f"traffic_level_{vehicle_id}", traffic_level)
-    experiment_id = mlflow.create_experiment("Traffic Optimization")
 
-mlflow.set_experiment(experiment_id)
-mlflow.log_param("experiment_id", experiment_id)
-mlflow.log_param("experiment_name", "Traffic Optimization")
-mlflow.log_param("run_id", mlflow.active_run().info.run_id)
+if __name__ == "__main__":
+    with ProcessPoolExecutor() as executor:
+        for simulation_time, sumo_config_file in product(simulation_times, sumo_config_files):
+            executor.submit(run_simulation_and_modeling,
+                            simulation_time, sumo_config_file)
